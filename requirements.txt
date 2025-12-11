@@ -1,5 +1,6 @@
 flask
-pinecone-client
 openai
+pandas
+pinecone
 python-dotenv
 tiktoken
