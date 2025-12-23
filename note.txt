@@ -1,0 +1,1 @@
+In your /api/prompt code, when you get the results from Pinecone, you must deduplicate by talk_id. If you get three chunks for talk #101, you should only pick the best one (the one with the highest score) to fulfill the "3 distinct titles" requirement.
