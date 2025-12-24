@@ -80,32 +80,20 @@ def process_and_upload():
     csv_path = Path(__file__).parent.parent / "data" / "ted_talks_en.csv"
     df = pd.read_csv(csv_path)
     
-    # TARGET ROWS 20-40 (iloc is exclusive at the end, so 41 is used)
-    df_subset = df.iloc[20:41] 
+    # Process from row 3514 onwards
+    df = df.iloc[3514:]
     
     vectors_to_upsert = []
-    print("Processing talks 20-40 with 'Narrative Header' strategy...")
     
-    for _, row in df_subset.iterrows():
+    for _, row in df.iterrows():
         speakers = get_clean_speakers(row)
-        
-        # 3. NARRATIVE HEADER (The Search Context)
-        # This makes the vector searchable by Title, Speaker, and Topics [cite: 121, 125]
-        embedding_header = (
-            f"Title: {row['title']}; "
-            f"Speaker: {speakers}; "
-            f"Occupations: {row['occupations']}; "
-            f"Topics: {row['topics']}; "
-            f"Description: {row['description']}. "
-            f"Transcript: "
-        )
         
         transcript = str(row['transcript']) if not pd.isna(row['transcript']) else ""
         chunks = get_balanced_chunks(transcript, limit=CHUNK_SIZE_LIMIT, residual_threshold=200, overlap_ratio=OVERLAP/CHUNK_SIZE_LIMIT)
         
         for chunk_index, chunk_content in enumerate(chunks):
-            # Composite String for Embedding
-            text_to_embed = embedding_header + chunk_content
+            # Only embed the transcript content
+            text_to_embed = chunk_content
             
             try:
                 embedding = get_embedding(text_to_embed)
@@ -122,7 +110,7 @@ def process_and_upload():
                 vectors_to_upsert.append((f"{row['talk_id']}_c{chunk_index}", embedding, metadata))
                 
             except Exception as e:
-                print(f"Error at talk {row['talk_id']}: {e}")
+                pass
 
             if len(vectors_to_upsert) >= BATCH_SIZE:
                 index.upsert(vectors=vectors_to_upsert)
@@ -130,7 +118,6 @@ def process_and_upload():
 
     if vectors_to_upsert:
         index.upsert(vectors=vectors_to_upsert)
-    print("Upload of rows 20-40 complete.")
 
 if __name__ == "__main__":
     process_and_upload()

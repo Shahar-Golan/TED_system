@@ -4,6 +4,7 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+from collections import OrderedDict
 
 # Load .env from project root
 env_path = Path(__file__).parent.parent / ".env"
@@ -106,14 +107,17 @@ def chat():
     final_answer = chat_response.choices[0].message.content
 
     # 6. Return Final JSON (Strict format required by PDF)
-    return jsonify({
-        "response": final_answer,
-        "context": context_list_json,
-        "Augmented_prompt": {
-            "System": SYSTEM_PROMPT,
-            "User": f"Context:\n{context_text}\n\nQuestion: {user_query}"
-        }
-    })
+    response_data = OrderedDict([
+            ("response", final_answer),
+            ("context", context_list_json),
+            ("Augmented_prompt", {
+                "System": SYSTEM_PROMPT,
+                "User": f"Context:\n{context_text}\n\nQuestion: {user_query}"
+            })
+        ])
+    app.json.sort_keys = False
+
+    return jsonify(response_data)
 
 # For local testing
 if __name__ == '__main__':
