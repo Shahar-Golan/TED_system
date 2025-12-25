@@ -21,9 +21,9 @@ PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "ted-rag")
 # Constants from your assignment
 EMBEDDING_MODEL = "RPRTHPB-text-embedding-3-small"
 GPT_MODEL = "RPRTHPB-gpt-5-mini"
-TOP_K = 5
-CHUNK_SIZE = 2048
-OVERLAP = 300
+TOP_K = 10
+CHUNK_SIZE = 1024
+OVERLAP = 0.2
 
 # Initialize Clients
 pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -45,7 +45,7 @@ def stats():
     # Strict JSON format required by assignment
     return jsonify({
         "chunk_size": CHUNK_SIZE,
-        "overlap_ratio": round(OVERLAP / CHUNK_SIZE, 2), # e.g. 0.15
+        "overlap_ratio": OVERLAP, # e.g. 0.15
         "top_k": TOP_K
     })
 

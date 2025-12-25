@@ -2,8 +2,8 @@ import requests
 import json
 
 url = "http://127.0.0.1:3000/api/prompt"
-payload = {"question": "Which TED talk focuses on education or learning? Return a list of exactly 3 talk titles"}
-
+payload = {"question": "I’m looking for a TED talk about climate change and what individuals can do in their daily lives. Which talk would you recommend?"
+}
 try:
     print(f"Sending request to {url}...")
     response = requests.post(url, json=payload)
