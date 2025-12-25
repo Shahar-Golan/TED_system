@@ -12,6 +12,26 @@ load_dotenv(env_path)
 
 app = Flask(__name__)
 
+# ... after app = Flask(__name__) ...
+
+@app.route('/')
+def home():
+    return """
+    <html>
+        <head><title>TED Assistant API</title></head>
+        <body style="font-family: sans-serif; padding: 50px;">
+            <h1>TED Talk RAG Assistant is Live!</h1>
+            <p>This is the API backend. The system is ready to receive requests.</p>
+            <ul>
+                <li><strong>Stats:</strong> <a href="/api/stats">/api/stats</a></li>
+                <li><strong>Chat:</strong> Use the <code>/api/prompt</code> endpoint (POST only)</li>
+            </ul>
+        </body>
+    </html>
+    """
+
+# ... your @app.route('/api/stats') follows below ...
+
 # --- Configuration ---
 # Note: Vercel will get these from the "Environment Variables" settings you add later
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
@@ -61,7 +81,7 @@ def chat():
     emb_response = client.embeddings.create(input=user_query, model=EMBEDDING_MODEL)
     query_vector = emb_response.data[0].embedding
 
-# 2. Search Pinecone
+    # 2. Search Pinecone
     search_results = index.query(vector=query_vector, top_k=10, include_metadata=True)
 
     # 3. DEDUPLICATION: Keep only the best chunk for each unique talk_id

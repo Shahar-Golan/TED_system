@@ -1,7 +1,7 @@
 import requests
 import json
 
-url = "http://127.0.0.1:3000/api/prompt"
+url = "https://ted-system.vercel.app/api/prompt"
 payload = {"question": "I’m looking for a TED talk about climate change and what individuals can do in their daily lives. Which talk would you recommend?"
 }
 try:
