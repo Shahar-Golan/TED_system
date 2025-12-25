@@ -2,7 +2,7 @@ import requests
 import json
 
 url = "http://127.0.0.1:3000/api/prompt"
-payload = {"question": "Which talk talks about discovering creatures in Mars and space"}
+payload = {"question": "Which TED talk focuses on education or learning? Return a list of exactly 3 talk titles"}
 
 try:
     print(f"Sending request to {url}...")
