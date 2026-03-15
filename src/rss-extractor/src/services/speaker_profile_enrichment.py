@@ -36,7 +36,7 @@ Role update rules
 
 ``recent_news`` configuration
 ------------------------------
-* Max retained items: 10
+* Max retained items: 5
 * Recency window: 90 days
 * Dedup heuristic: normalised headline prefix (first 60 characters).
 * Same-development refresh: newer article replaces older item if their
@@ -46,6 +46,8 @@ Role update rules
 from __future__ import annotations
 
 import logging
+import os
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -61,19 +63,34 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Maximum number of ``recent_news.items`` retained per speaker profile.
-MAX_RECENT_NEWS_ITEMS: int = 10
+MAX_RECENT_NEWS_ITEMS: int = 5
 
 #: Rolling recency window for recent-news items.
 RECENT_NEWS_WINDOW_DAYS: int = 90
 
 #: Minimum relevance score for a mention to trigger an enrichment write.
-MIN_ENRICHMENT_RELEVANCE_SCORE: float = 0.05
+MIN_ENRICHMENT_RELEVANCE_SCORE: float = 0.2
 
 #: Minimum confidence threshold to write a speaker match.
 MIN_MATCH_CONFIDENCE: float = 0.7
 
 #: Number of leading characters used for headline dedup comparison.
 HEADLINE_DEDUP_PREFIX_LEN: int = 60
+
+#: Minimum score required from LLM importance gate to include in recent news.
+LLM_IMPORTANCE_MIN_SCORE: float = 0.65
+
+#: LLM model and endpoint used for importance verification.
+LLM_IMPORTANCE_MODEL: str = os.environ.get("GPT_MODEL", "RPRTHPB-gpt-5-mini")
+LLM_IMPORTANCE_BASE_URL: str = os.environ.get("BASE_URL", "https://api.llmod.ai/v1")
+
+#: When true, recent-news entries require a successful LLM decision.
+REQUIRE_LLM_IMPORTANCE_VERIFICATION: bool = (
+    os.environ.get("REQUIRE_LLM_IMPORTANCE_VERIFICATION", "true").strip().lower()
+    == "true"
+)
+
+_openai_client: Any | None = None
 
 # ---------------------------------------------------------------------------
 # Typed domain models
@@ -120,10 +137,11 @@ class RecentNewsItem:
 
     Attributes:
         date: ISO 8601 date string for the article's publication date.
-        headline: Article headline.
-        summary: Short summary of the article (~200 chars).
+        headline: Paraphrased headline describing the development.
+        summary: Short body text that includes the source link.
         significance: Importance label derived from the relevance level.
         source_article_id: The ``doc_id`` of the backing ``news_articles`` row.
+        source_url: Canonical URL of the article when available.
     """
 
     date: str
@@ -131,6 +149,7 @@ class RecentNewsItem:
     summary: str
     significance: str
     source_article_id: str
+    source_url: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -139,7 +158,23 @@ class RecentNewsItem:
             "summary": self.summary,
             "significance": self.significance,
             "source_article_id": self.source_article_id,
+            "source_url": self.source_url,
         }
+
+
+@dataclass
+class ImportanceDecision:
+    """Decision returned by the LLM importance verification gate.
+
+    Attributes:
+        should_include: Whether the article is material enough for recent news.
+        importance_score: Score in the range 0.0-1.0.
+        reason: Short explanation of the decision.
+    """
+
+    should_include: bool
+    importance_score: float
+    reason: str
 
 
 @dataclass
@@ -260,6 +295,29 @@ _WEAK_ROLE_TOKENS: frozenset[str] = frozenset(
 )
 
 
+def _is_historical_role(role: str | None) -> bool:
+    """Return ``True`` when *role* appears to describe a former role.
+
+    Historical roles (e.g. ``"Former President"``) should not block updates
+    from strong current-role evidence in new articles.
+    """
+    if not role:
+        return False
+
+    normalized = role.strip().lower()
+    if not normalized:
+        return False
+
+    historical_prefixes: tuple[str, ...] = (
+        "former ",
+        "ex-",
+        "ex ",
+        "past ",
+        "previous ",
+    )
+    return normalized.startswith(historical_prefixes)
+
+
 def _role_strength(role: str) -> int:
     """Return an integer strength score for *role*.
 
@@ -268,6 +326,10 @@ def _role_strength(role: str) -> int:
     """
     if not role or not role.strip():
         return 0
+    if _is_historical_role(role):
+        # Historical titles are intentionally treated as weak so current-role
+        # evidence can replace them.
+        return 1
     normalized = role.strip().lower()
     if normalized in _WEAK_ROLE_TOKENS:
         return 1
@@ -567,6 +629,31 @@ def resolve_role_update(
             reason=f"Article role '{article_role}' is too vague (strength={article_strength}).",
         )
 
+    existing_is_historical = _is_historical_role(existing_role)
+    article_is_historical = _is_historical_role(article_role)
+
+    if existing_role and existing_is_historical and not article_is_historical:
+        return ResolvedRoleUpdate(
+            new_role=article_role,
+            existing_role=existing_role,
+            should_update=True,
+            reason=(
+                f"Existing role '{existing_role}' is historical while article role "
+                f"'{article_role}' indicates a current role."
+            ),
+        )
+
+    if existing_role and article_is_historical and not existing_is_historical:
+        return ResolvedRoleUpdate(
+            new_role=article_role,
+            existing_role=existing_role,
+            should_update=False,
+            reason=(
+                f"Article role '{article_role}' is historical and cannot replace "
+                f"current role '{existing_role}'."
+            ),
+        )
+
     existing_strength = _role_strength(existing_role or "")
     if existing_strength >= article_strength and existing_role:
         return ResolvedRoleUpdate(
@@ -617,6 +704,152 @@ def _normalize_headline_for_dedup(headline: str) -> str:
     return normalized[:HEADLINE_DEDUP_PREFIX_LEN]
 
 
+def _get_openai_client() -> Any | None:
+    """Lazily initialize the OpenAI client used for importance gating."""
+    global _openai_client
+    if _openai_client is not None:
+        return _openai_client
+
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_api_key:
+        logger.warning(
+            "OPENAI_API_KEY missing; LLM importance verification is unavailable."
+        )
+        return None
+
+    try:
+        from openai import OpenAI  # type: ignore[import-untyped]
+    except ImportError:
+        logger.warning(
+            "openai package not installed; LLM importance verification is unavailable."
+        )
+        return None
+
+    _openai_client = OpenAI(api_key=openai_api_key, base_url=LLM_IMPORTANCE_BASE_URL)
+    return _openai_client
+
+
+def _parse_importance_decision(raw_content: str) -> ImportanceDecision | None:
+    """Parse a JSON decision returned by the LLM importance gate."""
+    try:
+        parsed = json.loads(raw_content)
+    except json.JSONDecodeError:
+        return None
+
+    include_raw = parsed.get("should_include")
+    score_raw = parsed.get("importance_score", 0.0)
+    reason_raw = parsed.get("reason", "No reason provided.")
+
+    should_include = bool(include_raw)
+    try:
+        importance_score = float(score_raw)
+    except (TypeError, ValueError):
+        importance_score = 0.0
+    importance_score = max(0.0, min(1.0, importance_score))
+    reason = str(reason_raw)
+
+    return ImportanceDecision(
+        should_include=should_include,
+        importance_score=importance_score,
+        reason=reason,
+    )
+
+
+def verify_recent_news_importance(
+    record: SupabaseRecord,
+    mention: PoliticianMention,
+) -> ImportanceDecision:
+    """Use an LLM to decide whether an article is important enough for recent news.
+
+    The model should reject fluff, generic roundups, and weak name-drop mentions.
+    """
+    client = _get_openai_client()
+    if client is None:
+        return ImportanceDecision(
+            should_include=not REQUIRE_LLM_IMPORTANCE_VERIFICATION,
+            importance_score=0.0,
+            reason="LLM unavailable.",
+        )
+
+    prompt = (
+        "Decide if the article is materially important for the politician's recent news. "
+        "Reject fluff, generic roundups, or weak mentions. "
+        "Only include if there is a concrete development: policy action, legal event, "
+        "official announcement, election movement, major controversy, or consequential statement.\n\n"
+        f"Politician: {mention.politician_name}\n"
+        f"Article title: {record.title or ''}\n"
+        f"Article date: {record.date or ''}\n"
+        f"Source link: {record.link or ''}\n"
+        f"Mention relevance: {mention.relevance.value}\n"
+        f"Mention score: {mention.relevance_score:.4f}\n"
+        f"Article text excerpt: {(record.text or '')[:1400]}\n\n"
+        "Return ONLY JSON object with keys: "
+        "should_include (boolean), importance_score (0..1), reason (string)."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=LLM_IMPORTANCE_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a strict political news editor. Output valid JSON only.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=1,
+            max_tokens=250,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        decision = _parse_importance_decision(content)
+        if decision is None:
+            return ImportanceDecision(
+                should_include=not REQUIRE_LLM_IMPORTANCE_VERIFICATION,
+                importance_score=0.0,
+                reason="Invalid JSON from LLM.",
+            )
+
+        if decision.importance_score < LLM_IMPORTANCE_MIN_SCORE:
+            decision.should_include = False
+        return decision
+
+    except Exception as exc:
+        logger.warning("LLM importance gate failed for article_id=%s: %s", record.doc_id, exc)
+        return ImportanceDecision(
+            should_include=not REQUIRE_LLM_IMPORTANCE_VERIFICATION,
+            importance_score=0.0,
+            reason=f"LLM error: {exc}",
+        )
+
+
+def _build_paraphrased_headline(
+    original_headline: str,
+    politician_name: str,
+    article_text: str,
+) -> str:
+    """Create a short paraphrased headline for recent-news items.
+
+    The recent-news UI should show a concise paraphrase, not the original
+    publisher headline.
+    """
+    body_text = re.sub(r"\s+", " ", (article_text or "").strip())
+    sentence_candidates = [s.strip() for s in re.split(r"[.!?]", body_text) if s.strip()]
+    first_sentence = sentence_candidates[0] if sentence_candidates else ""
+    if first_sentence:
+        first_sentence = first_sentence[:90].rstrip(" ,;:")
+        candidate = f"{politician_name}: {first_sentence}"
+    else:
+        candidate = f"Update involving {politician_name}"
+
+    # Ensure this is not just the original headline repeated.
+    if _normalize_headline_for_dedup(candidate) == _normalize_headline_for_dedup(
+        original_headline
+    ):
+        return f"Update on {politician_name}"
+    return candidate
+
+
 def build_recent_news_item(
     record: SupabaseRecord,
     mention: PoliticianMention,
@@ -630,17 +863,27 @@ def build_recent_news_item(
     Returns:
         A :class:`RecentNewsItem` ready for insertion into ``recent_news.items``.
     """
-    # Build a short summary from the article body (first 200 chars)
+    # Build a short summary from the article body (first 200 chars) and
+    # include the original URL for provenance in the body.
     summary = (record.text or "")[:200].strip()
     if len(record.text or "") > 200:
         summary += "…"
+    if record.link:
+        summary = f"{summary}\nSource: {record.link}" if summary else f"Source: {record.link}"
+
+    paraphrased_headline = _build_paraphrased_headline(
+        original_headline=record.title or "",
+        politician_name=mention.politician_name,
+        article_text=record.text or "",
+    )
 
     return RecentNewsItem(
         date=record.date or "",
-        headline=record.title or "",
+        headline=paraphrased_headline,
         summary=summary,
         significance=_significance_label(mention.relevance),
         source_article_id=record.doc_id,
+        source_url=record.link or "",
     )
 
 
@@ -691,6 +934,7 @@ def merge_recent_news(
                     summary=raw.get("summary", ""),
                     significance=raw.get("significance", ""),
                     source_article_id=raw.get("source_article_id", ""),
+                    source_url=raw.get("source_url", ""),
                 )
             )
         existing_source_ids = list(existing.get("source_article_ids") or [])
@@ -956,7 +1200,7 @@ def enrich_from_article(
     for mention in mentions:
         if mention.relevance_score < MIN_ENRICHMENT_RELEVANCE_SCORE:
             continue
-        if mention.relevance == RelevanceLevel.IRRELEVANT:
+        if mention.relevance in (RelevanceLevel.IRRELEVANT, RelevanceLevel.INCIDENTAL):
             continue
 
         # --- 1. Match ---
@@ -1020,6 +1264,18 @@ def enrich_from_article(
             match.speaker_id,
             role_update.reason,
         )
+
+        # LLM quality gate: only keep materially important developments.
+        importance_decision = verify_recent_news_importance(record, mention)
+        if not importance_decision.should_include:
+            logger.info(
+                "article_id=%s | speaker_id=%s | recent-news skip (importance=%.2f): %s",
+                record.doc_id,
+                match.speaker_id,
+                importance_decision.importance_score,
+                importance_decision.reason,
+            )
+            continue
 
         # --- 5 & 6. Recent-news construction and merge ---
         news_item = build_recent_news_item(record, mention)

@@ -210,6 +210,7 @@ Page Builder agent    → figure_pages table
 
 ---
 
+<<<<<<< HEAD
 ### Infrastructure (continued)
 
 #### `speaker_profiles`
@@ -307,6 +308,9 @@ top-level sibling of `bio`, `media_profile`, `notable_topics`, etc.
 items when candidate articles fail the material-importance gate.
 
 ---
+=======
+## Raw vs normalised data
+>>>>>>> master
 
 - **Raw**: `tweets.text`, `news_articles.text` — unmodified source content.
 - **Normalised/derived**: `topics`, `contradictions`, `figure_pages` — LLM-generated analysis of the raw data.

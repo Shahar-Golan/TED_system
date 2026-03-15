@@ -43,6 +43,7 @@ from services.speaker_profile_enrichment import (
     merge_profile_update,
     merge_recent_news,
     resolve_role_update,
+    verify_recent_news_importance,
 )
 
 
@@ -534,6 +535,23 @@ class TestResolveRoleUpdate:
         # Both are strength=2; existing is already strong → no update
         assert not result.should_update
 
+    def test_current_role_replaces_historical_role(self) -> None:
+        """A current role should replace a historical role like 'Former President'."""
+        result = resolve_role_update(
+            "President of the United States",
+            "Former President of the United States",
+        )
+        assert result.should_update
+        assert result.new_role == "President of the United States"
+
+    def test_historical_role_does_not_replace_current_role(self) -> None:
+        """Historical article role evidence must not downgrade a current role."""
+        result = resolve_role_update(
+            "Former President",
+            "President of the United States",
+        )
+        assert not result.should_update
+
     def test_sync_bio_current_role(self) -> None:
         """After a role update, profile.bio.current_role is synchronised."""
         profile = _make_profile("politician", "politician")
@@ -621,11 +639,15 @@ class TestBuildRecentNewsItem:
         )
         mention = _make_mention(relevance=RelevanceLevel.PRIMARY)
         item = build_recent_news_item(record, mention)
-        assert item.headline == "Breaking News"
+        assert item.headline != "Breaking News"
+        assert item.headline.startswith("Donald Trump:") or item.headline.startswith(
+            "Update on Donald Trump"
+        )
         assert item.source_article_id == "a1"
+        assert item.source_url == "https://example.com/article"
         assert item.date == "2025-03-01"
         assert item.significance == "primary subject"
-        assert len(item.summary) <= 201  # 200 chars + ellipsis
+        assert "Source: https://example.com/article" in item.summary
 
     def test_significance_secondary(self) -> None:
         mention = _make_mention(relevance=RelevanceLevel.SECONDARY)
@@ -638,8 +660,117 @@ class TestBuildRecentNewsItem:
         assert item.significance == "brief mention"
 
 
+class TestEnrichmentRelevanceGate:
+    """Tests for recent-news relevance filtering."""
+
+    def test_incidental_mentions_are_skipped(self) -> None:
+        record = _make_record()
+        mention = _make_mention(
+            relevance=RelevanceLevel.INCIDENTAL,
+            relevance_score=0.35,
+        )
+        stats = EnrichmentStats()
+        client = MagicMock()
+
+        enrich_from_article(record, [mention], client, stats)
+
+        assert stats.matches_found == 0
+        assert stats.recent_news_updates == 0
+
+
+class TestImportanceGate:
+    """Tests for LLM-backed recent-news importance filtering."""
+
+    def test_verify_recent_news_importance_accepts_material_article(self) -> None:
+        record = _make_record(
+            title="Trump signs major immigration order",
+            text="President Trump signed an executive order introducing major immigration changes.",
+        )
+        mention = _make_mention()
+
+        fake_client = MagicMock()
+        fake_response = MagicMock()
+        fake_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content='{"should_include": true, "importance_score": 0.86, "reason": "major policy action"}'
+                )
+            )
+        ]
+        fake_client.chat.completions.create.return_value = fake_response
+
+        with patch(
+            "services.speaker_profile_enrichment._get_openai_client",
+            return_value=fake_client,
+        ):
+            decision = verify_recent_news_importance(record, mention)
+
+        assert decision.should_include
+        assert decision.importance_score >= 0.8
+
+    def test_verify_recent_news_importance_rejects_fluff(self) -> None:
+        record = _make_record(
+            title="Trump appears in social media roundup",
+            text="A broad recap article briefly mentions Trump among many public figures.",
+        )
+        mention = _make_mention(relevance=RelevanceLevel.SECONDARY, relevance_score=0.31)
+
+        fake_client = MagicMock()
+        fake_response = MagicMock()
+        fake_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content='{"should_include": false, "importance_score": 0.22, "reason": "name drop only"}'
+                )
+            )
+        ]
+        fake_client.chat.completions.create.return_value = fake_response
+
+        with patch(
+            "services.speaker_profile_enrichment._get_openai_client",
+            return_value=fake_client,
+        ):
+            decision = verify_recent_news_importance(record, mention)
+
+        assert not decision.should_include
+        assert decision.importance_score <= 0.3
+
+    def test_enrich_from_article_skips_when_importance_gate_rejects(self) -> None:
+        record = _make_record()
+        mention = _make_mention(relevance=RelevanceLevel.PRIMARY, relevance_score=0.9)
+        row = _make_speaker_row()
+        stats = EnrichmentStats()
+
+        with patch(
+            "services.speaker_profile_enrichment.match_speaker",
+            return_value=SpeakerMatchResult(
+                speaker_id="donald_trump",
+                name="Donald Trump",
+                confidence=1.0,
+                match_reason="exact_id",
+            ),
+        ), patch(
+            "services.speaker_profile_enrichment.fetch_speaker_row",
+            return_value=row,
+        ), patch(
+            "services.speaker_profile_enrichment.verify_recent_news_importance",
+            return_value=MagicMock(should_include=False, importance_score=0.1, reason="fluff"),
+        ), patch(
+            "services.speaker_profile_enrichment.persist_speaker_update",
+            return_value=True,
+        ) as persist_mock:
+            enrich_from_article(record, [mention], MagicMock(), stats)
+
+        persist_mock.assert_not_called()
+        assert stats.recent_news_updates == 0
+
+
 class TestMergeRecentNews:
     """Tests for merge_recent_news()."""
+
+    def test_recent_news_cap_is_5(self) -> None:
+        """Business rule: keep at most 5 recent-news items per profile."""
+        assert MAX_RECENT_NEWS_ITEMS == 5
 
     def test_first_article_creates_recent_news(self) -> None:
         item = RecentNewsItem(
