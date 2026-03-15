@@ -34,8 +34,8 @@ Stores news articles scraped from RSS feeds.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | SERIAL | Primary key |
-| `doc_id` | TEXT | Unique content hash (SHA-256) |
+| `id` | TEXT | UUID-4 primary key (generated per record) |
+| `doc_id` | TEXT | Unique content hash (SHA-256) — also the Pinecone vector ID |
 | `title` | TEXT | Article headline |
 | `text` | TEXT | Full article body |
 | `date` | TEXT | Publication date (string) |
@@ -172,12 +172,16 @@ Each vector carries the following metadata fields (mirrors `tweets` table):
 
 | Field | Type | Notes |
 |---|---|---|
-| `doc_id` | string | Supabase primary key |
-| `title` | string | Article headline |
-| `media_name` | string | Publication |
-| `state` | string | US state |
-| `date` | string | Publication date |
-| `speakers_mentioned` | list[string] | Politicians mentioned |
+| `doc_id` | string | Supabase `news_articles.doc_id` — also the vector ID |
+| `title` | string | Article headline (≤ 200 chars) |
+| `text` | string | Body preview (≤ 500 chars) |
+| `date` | string | ISO 8601 publication date or `""` |
+| `media_name` | string | Publication name |
+| `media_type` | string | e.g. `"rss_news"` |
+| `state` | string | US state or `""` |
+| `link` | string | Canonical article URL |
+| `speakers_mentioned` | list[string] | Politician names mentioned |
+| `type` | string | Always `"news_article"` |
 | `topics` | list[string] | Added by Topic Extractor (Phase 2) |
 
 ---
@@ -308,9 +312,84 @@ top-level sibling of `bio`, `media_profile`, `notable_topics`, etc.
 items when candidate articles fail the material-importance gate.
 
 ---
-=======
+
+## RSS → Pinecone indexing flow
+
+### Overview
+
+After a new article is persisted to Supabase, `run_pipeline.py` (Stage 7 →
+now Stage 6 in the current pipeline) calls
+`src/rss-extractor/src/services/pinecone_indexer.py` to embed and upsert each
+article into the `politics-news` Pinecone index using the same methodology as
+`src/load_news_to_supabase_and_pinecone.py`.
+
+### Where indexing happens
+
+`src/rss-extractor/src/services/pinecone_indexer.py`
+
+- `IndexableArticle` — normalised document representation consumed by the indexer.
+- `supabase_record_to_indexable()` — adapter that converts a `SupabaseRecord`
+  (the output of Stage 4 — CSV export) into an `IndexableArticle`.
+- `index_articles()` — embeds and upserts a list of `IndexableArticle` objects.
+
+### Document / chunk IDs
+
+| Concept | Value | Notes |
+|---|---|---|
+| Vector ID | `doc_id` | SHA-256 content hash — identical to `news_articles.doc_id` in Supabase |
+| Chunking | 1 vector per article | Same convention as `load_news_to_supabase_and_pinecone.py` |
+| Embed text | `f"{title}\n\n{body}"` truncated to 8,000 chars | Same as existing corpus |
+
+Because the vector ID equals `doc_id`, upserts are idempotent — re-running the
+RSS pipeline overwrites the existing vector rather than creating a duplicate.
+
+### Metadata stored in Pinecone (`politics-news` index)
+
+The following fields exactly match the contract expected by
+`src/agent_tools/news_search.py`:
+
+| Field | Type | Source |
+|---|---|---|
+| `doc_id` | string | `SupabaseRecord.doc_id` |
+| `title` | string | headline (≤ 200 chars) |
+| `text` | string | body preview (≤ 500 chars) |
+| `date` | string | ISO 8601 publication date or `""` |
+| `media_name` | string | publication name |
+| `media_type` | string | e.g. `"rss_news"` |
+| `state` | string | US state or `""` |
+| `link` | string | canonical article URL |
+| `speakers_mentioned` | list[string] | parsed from comma-separated `SupabaseRecord.speakers_mentioned` |
+| `type` | string | always `"news_article"` |
+
+### Duplicate prevention
+
+- **Stable vector ID** — `doc_id` is derived from a SHA-256 hash of the article
+  content and URL.  The same article always produces the same `doc_id`.
+- **Upsert semantics** — Pinecone's `upsert` replaces an existing vector with
+  the same ID.  Reruns are safe.
+- **Changed content** — if an article's body changes between runs, the new vector
+  silently replaces the old one (same ID, new embedding).
+
+### Error handling
+
+- Pinecone failures are logged at `ERROR` level and recorded in
+  `PineconeIndexResult.error_messages`.
+- A Pinecone failure does **not** fail the Supabase push (Stage 5).  The
+  article row is intact in Supabase; re-running the pipeline (even with
+  `--skip-extract`) will re-attempt indexing.
+- The GHA step summary and `pinecone_upserted` step output reflect the actual
+  number of vectors upserted.
+
+### CLI flags
+
+| Flag | Effect |
+|---|---|
+| `--skip-index` | Skip Stage 6 entirely |
+| `--dry-run` | Skip both Supabase push (Stage 5) and Pinecone indexing (Stage 6) |
+
+---
+
 ## Raw vs normalised data
->>>>>>> master
 
 - **Raw**: `tweets.text`, `news_articles.text` — unmodified source content.
 - **Normalised/derived**: `topics`, `contradictions`, `figure_pages` — LLM-generated analysis of the raw data.
