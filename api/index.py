@@ -42,6 +42,7 @@ client = OpenAI(
 )
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip('"')
+ARCHITECTURE_IMAGE_PATH = Path(__file__).parent.parent / "system_architecture.png"
 
 
 def _get_db():
@@ -251,6 +252,19 @@ def agent_info() -> Response:
         },
         "prompt_examples": _build_agent_info_examples()
     })
+
+
+@app.route('/api/model_architecture', methods=['GET'])
+def model_architecture() -> Response:
+    """Returns the architecture diagram as a PNG image."""
+    if not ARCHITECTURE_IMAGE_PATH.exists():
+        return jsonify({"error": "Architecture image not found"}), 404
+
+    return send_from_directory(
+        str(ARCHITECTURE_IMAGE_PATH.parent),
+        ARCHITECTURE_IMAGE_PATH.name,
+        mimetype='image/png',
+    )
 
 
 @app.route('/api/stats', methods=['GET'])

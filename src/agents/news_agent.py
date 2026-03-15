@@ -6,6 +6,7 @@ Searches the politics-news Pinecone index for relevant articles.
 
 import os
 import sys
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -31,13 +32,50 @@ politicians' actions, policies, and controversies.
 Given the user's question and relevant news articles retrieved from the database,
 provide a detailed, comprehensive answer. Follow these rules:
 
-- Cite specific articles: include the media outlet name, state, and date
-- Provide in-depth analysis drawing from multiple articles when possible
-- Highlight regional differences in coverage if evident
-- Note which public figures are mentioned and how they are portrayed
+- Start with a short direct answer in 1-2 sentences
+- Keep total length concise (target 120-180 words)
+- Use at most 4 bullet points after the short answer
+- Cite only the most relevant 1-3 sources inline (outlet + state + date)
+- Highlight regional differences only if clearly evident
 - Use ONLY the provided article data — do not use external knowledge
 - If articles are not relevant: "I don't have news coverage addressing this topic."
-- Structure your response with clear sections for readability"""
+- Do NOT append sections like "Articles", "Sources", "Raw sources", or "X sources"
+- Do NOT repeat full article snippets that are already shown in source cards"""
+
+
+def _strip_duplicate_source_dump(answer: str) -> str:
+    """Remove accidental trailing source/article dump from the textual answer."""
+    if not answer:
+        return answer
+
+    patterns = [
+        r"\n(?:Articles|Article Sources|Sources|Raw Sources?)\s*\n",
+        r"\n\d+\s+sources\s*\n",
+    ]
+
+    cleaned = answer
+    for pattern in patterns:
+        parts = re.split(pattern, cleaned, maxsplit=1, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            cleaned = parts[0].rstrip()
+
+    return cleaned.strip()
+
+
+def _limit_answer_length(answer: str, max_chars: int = 900) -> str:
+    """Apply a soft character budget to keep responses concise in the UI."""
+    if not answer or len(answer) <= max_chars:
+        return answer
+
+    clipped = answer[:max_chars].rstrip()
+    last_sentence_end = max(
+        clipped.rfind(". "),
+        clipped.rfind("! "),
+        clipped.rfind("? "),
+    )
+    if last_sentence_end > 300:
+        return clipped[: last_sentence_end + 1].strip()
+    return clipped.strip() + "..."
 
 
 def run_news_agent(query: str, top_k: int = 7, on_token=None) -> dict:
@@ -97,6 +135,12 @@ def run_news_agent(query: str, top_k: int = 7, on_token=None) -> dict:
         else:
             response = llm.invoke(messages)
             answer = response.content.strip()
+
+        answer = _strip_duplicate_source_dump(answer)
+        answer = _limit_answer_length(answer)
+
+        if not answer:
+            answer = "I found relevant coverage, but I could not synthesize a concise answer for this run."
     except Exception as e:
         answer = f"Error generating news analysis: {e}"
 
