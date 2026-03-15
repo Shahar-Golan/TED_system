@@ -312,6 +312,7 @@ function SpeakerProfile({ onBack }) {
               <div className="sp-speaker-name">{s.name}</div>
               <div className="sp-speaker-meta">{s.party}</div>
               <div className="sp-speaker-articles">{s.total_articles.toLocaleString()} articles</div>
+              <div className="sp-speaker-tweets">{(s.total_tweets || 0).toLocaleString()} tweets</div>
             </div>
           ))}
         </div>

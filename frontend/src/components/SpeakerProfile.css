@@ -93,6 +93,13 @@
   font-weight: 600;
 }
 
+.sp-speaker-tweets {
+  font-size: 11px;
+  color: #67c23a;
+  margin-top: 2px;
+  font-weight: 600;
+}
+
 /* ── Profile content ── */
 .sp-content {
   flex: 1;

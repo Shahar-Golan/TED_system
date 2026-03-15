@@ -23,8 +23,9 @@ Returns student details.
 **Response format (JSON):**
 ```json
 {
-  "group_batch_order_number": "{batch#}_{order#}", // from presentation list
-  "team_name": "שחר גולן + תומר פרץ + אייל קוטליק",
+  # I filled here the new value
+  "group_batch_order_number": "3_12", // from presentation list
+  "team_name": "שחר+תומר+אייל",
   "students": [
     
     { "name": "שחר גולן", "email": "shahar.golan@campus.technion.ac.il" },
@@ -132,7 +133,8 @@ You must include:
 
 ---
 
-## 3) Frontend/GUI (Required)
+# we have done this part.
+## 3) Frontend/GUI (Required) 
 
 You must provide a minimal web UI to operate your agent.
 

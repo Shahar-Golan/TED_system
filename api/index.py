@@ -8,6 +8,7 @@ import psycopg2
 from dotenv import load_dotenv
 from pathlib import Path
 from collections import OrderedDict
+from typing import Any
 
 # Add src directory to path for agent_tools import
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -21,6 +22,9 @@ load_dotenv(env_path)
 
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='/')
 CORS(app)  # Enable CORS for React frontend
+app.config["JSON_SORT_KEYS"] = False
+if hasattr(app, "json"):
+    app.json.sort_keys = False
 
 # --- Configuration ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -72,14 +76,151 @@ Guidelines:
 
 Keep responses focused and readable."""
 
+
+def _build_agent_info_examples() -> list[dict[str, Any]]:
+    """Return static examples aligned with the System B multi-agent architecture."""
+    return [
+        {
+            "prompt": "What does Donald Trump policy have said about Iran nuclear weapon development?",
+            "full_response": "No relevant news articles were synthesized into a final answer for this run.",
+            "steps": [
+                {
+                    "module": "Page Lookup",
+                    "prompt": {
+                        "query": "What does Donald Trump policy have said about Iran nuclear weapon development?",
+                        "task": "Check if cached figure page can answer directly."
+                    },
+                    "response": {
+                        "found": False,
+                        "content": None,
+                        "figure": "donald_trump"
+                    }
+                },
+                {
+                    "module": "Router",
+                    "prompt": {
+                        "query": "What does Donald Trump policy have said about Iran nuclear weapon development?",
+                        "page_context_available": False
+                    },
+                    "response": {
+                        "route": "news_agent",
+                        "reason": "This is a request about formal policy positions and actions (sanctions, diplomacy, military posture) rather than specific social-media remarks; news_agent specializes in detailed, contextual coverage of such policies."
+                    }
+                },
+                {
+                    "module": "News Agent",
+                    "prompt": {
+                        "query": "What does Donald Trump policy have said about Iran nuclear weapon development?",
+                        "source": "politics-news index"
+                    },
+                    "response": {
+                        "articles_count": 5,
+                        "agent": "news_agent",
+                        "result": "No relevant news synthesis was returned for this run."
+                    }
+                }
+            ]
+        },
+        {
+            "prompt": "What does Joe Biden policy about Palestine?",
+            "full_response": "No relevant news articles were synthesized into a final answer for this run.",
+            "steps": [
+                {
+                    "module": "Page Lookup",
+                    "prompt": {
+                        "query": "What does Joe Biden policy about Palestine?",
+                        "task": "Check if cached figure page can answer directly."
+                    },
+                    "response": {
+                        "found": False,
+                        "content": None,
+                        "figure": "joe_biden"
+                    }
+                },
+                {
+                    "module": "Router",
+                    "prompt": {
+                        "query": "What does Joe Biden policy about Palestine?",
+                        "page_context_available": False
+                    },
+                    "response": {
+                        "route": "news_agent",
+                        "reason": "This requires a detailed, contextual summary of Biden administration policy, actions, and coverage on Palestine rather than just social media quotes."
+                    }
+                },
+                {
+                    "module": "News Agent",
+                    "prompt": {
+                        "query": "What does Joe Biden policy about Palestine?",
+                        "source": "politics-news index"
+                    },
+                    "response": {
+                        "articles_count": 5,
+                        "agent": "news_agent",
+                        "result": "No relevant news synthesis was returned for this run."
+                    }
+                }
+            ]
+        },
+        {
+            "prompt": "Compare what Elon Musk tweeted about free speech with how news outlets covered it.",
+            "full_response": "The system would route this to both specialist agents, then merge the tweet-based answer and the news-based answer into one response that separates direct statements from media coverage.",
+            "steps": [
+                {
+                    "module": "Page Lookup",
+                    "prompt": {
+                        "query": "Compare what Elon Musk tweeted about free speech with how news outlets covered it.",
+                        "task": "Check whether the cached figure page already contains enough material to answer both sides of the comparison."
+                    },
+                    "response": {
+                        "found": False,
+                        "figure": "elon_musk",
+                        "decision": "The cached profile was insufficient for a full tweet-versus-news comparison."
+                    }
+                },
+                {
+                    "module": "Router",
+                    "prompt": {
+                        "query": "Compare what Elon Musk tweeted about free speech with how news outlets covered it.",
+                        "page_context_available": True
+                    },
+                    "response": {
+                        "route": "both",
+                        "reason": "The user explicitly wants both direct tweets and news coverage."
+                    }
+                },
+                {
+                    "module": "Tweet Agent",
+                    "prompt": {
+                        "query": "Compare what Elon Musk tweeted about free speech with how news outlets covered it.",
+                        "source": "politics tweet index"
+                    },
+                    "response": {
+                        "result": "Produced the direct-statement portion from tweets."
+                    }
+                },
+                {
+                    "module": "News Agent",
+                    "prompt": {
+                        "query": "Compare what Elon Musk tweeted about free speech with how news outlets covered it.",
+                        "source": "politics-news index"
+                    },
+                    "response": {
+                        "result": "Produced the coverage-analysis portion from news articles."
+                    }
+                }
+            ]
+        }
+    ]
+
 # --- Routes ---
 
 @app.route('/api/team_info', methods=['GET'])
 def team_info():
     """Returns student details for the team."""
     return jsonify({
-        "group_batch_order_number": "1_1",  # Update with actual batch and order number
-        "team_name": "שחר גולן + תומר פרץ + אייל קוטליק",
+        "group_batch_order_number": "3_12",
+        "team_name": "שחר+תומר+אייל",
         "students": [
             {"name": "שחר גולן", "email": "shahar.golan@campus.technion.ac.il"},
             {"name": "תומר פרץ", "email": "tomer.perez@campus.technion.ac.il"},
@@ -88,59 +229,27 @@ def team_info():
     })
 
 @app.route('/api/agent_info', methods=['GET'])
-def agent_info():
+def agent_info() -> Response:
     """Returns agent meta information and usage guidelines."""
-    
-    # Load prompt examples from file
-    examples_path = Path(__file__).parent.parent / "test" / "prompt_examples.json"
-    try:
-        with open(examples_path, 'r', encoding='utf-8') as f:
-            prompt_examples = json.load(f)
-    except Exception as e:
-        prompt_examples = []
-    
+
     return jsonify({
-        "description": "X-Platform Intelligence Agent - A ReAct-based (Reasoning + Acting) agent that analyzes tweets from public figures and investigates linked content to provide comprehensive, evidence-based answers.",
-        "purpose": "To help users understand what public figures have stated on social media by intelligently searching tweets, scraping linked articles for additional context, and synthesizing information with proper attribution and citations.",
-        "architecture": {
-            "framework": "ReAct (Reasoning + Acting)",
-            "mode": "LLM-powered with rule-based fallback",
-            "components": [
-                {
-                    "name": "vector_search",
-                    "description": "Searches Pinecone vector database for relevant tweets using semantic similarity",
-                    "parameters": "query (str), top_k (int)"
-                },
-                {
-                    "name": "web_scraper",
-                    "description": "Extracts and analyzes content from URLs found in tweets",
-                    "parameters": "url (str)"
-                },
-                {
-                    "name": "url_extractor",
-                    "description": "Identifies and extracts URLs from tweet text",
-                    "parameters": "text (str)"
-                }
-            ],
-            "workflow": "The agent follows an iterative ReAct loop: (1) THOUGHT - analyze current state and decide what information is needed, (2) ACTION - execute a tool (vector_search, web_scraper, or finalize), (3) OBSERVATION - review results. This continues for up to 5 iterations until sufficient information is gathered."
-        },
+        "description": "Politics-Contradictor uses a multi-agent System B query graph with four interactive modules: Page Lookup, Router, Tweet Agent, and News Agent. The graph first checks for an existing figure-page answer, then routes the query to tweet evidence, news coverage, or both.",
+        "purpose": "Provide structured answers about public figures while preserving the lecturer's required API format: direct statements come from Tweet Agent, coverage questions come from News Agent, and mixed questions can use both after Page Lookup and Router decide the path.",
         "prompt_template": {
-            "template": "What does [Public Figure Name] say about [Topic]?",
+            "template": "Ask about a public figure and a topic, for example: 'What did [Figure] say about [Topic]?' for direct statements, 'How did news cover [Figure] on [Topic]?' for media coverage, or 'Compare [Figure]'s tweets and news coverage about [Topic]' when both views are needed.",
             "examples": [
-                "What does Donald Trump say about immigration policy?",
-                "What is Barack Obama's opinion on healthcare reform?",
-                "What does Elon Musk say about space exploration and life on Mars?",
-                "What did Hillary Clinton say about climate change?",
-                "What is Joe Biden's stance on infrastructure?"
+                "What does Donald Trump policy have said about Iran nuclear weapon development?",
+                "What does Joe Biden policy about Palestine?",
+                "Compare what Elon Musk tweeted about free speech with how news outlets covered it."
             ],
             "guidelines": [
-                "Include the public figure's name for targeted search results",
-                "Be specific about the topic for more relevant tweets",
-                "The agent works best with topics that public figures actively discuss on Twitter/X",
-                "For best results, ask about opinions, statements, or positions on specific issues"
+                "Name the public figure explicitly so Page Lookup can identify the right profile.",
+                "Ask for direct statements when you want Tweet Agent to search social-media evidence.",
+                "Ask about coverage, reporting, or regional analysis when you want News Agent.",
+                "Ask for a comparison when you want Router to choose both specialist agents."
             ]
         },
-        "prompt_examples": prompt_examples
+        "prompt_examples": _build_agent_info_examples()
     })
 
 
@@ -316,10 +425,27 @@ def get_speakers():
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT speaker_id, name, party, "current_role",
-                       profile->'bio'->>'born' as born,
-                       profile->'dataset_insights'->>'total_articles' as total_articles
-                FROM speaker_profiles ORDER BY name
+                SELECT sp.speaker_id,
+                       sp.name,
+                       sp.party,
+                       sp."current_role",
+                       sp.profile->'bio'->>'born' as born,
+                       sp.profile->'dataset_insights'->>'total_articles' as total_articles,
+                       COUNT(t.author_name) as total_tweets
+                FROM speaker_profiles sp
+                LEFT JOIN tweets t
+                                    ON (
+                                             LOWER(REGEXP_REPLACE(COALESCE(t.author_name, ''), '[^a-z0-9]', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(sp.name, ''), '[^a-z0-9]', '', 'g'))
+                                        OR LOWER(REGEXP_REPLACE(COALESCE(t.author_name, ''), '[^a-z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE(COALESCE(sp.name, ''), '[^a-z0-9]', '', 'g')) || '%'
+                                        OR LOWER(REGEXP_REPLACE(COALESCE(sp.name, ''), '[^a-z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE(COALESCE(t.author_name, ''), '[^a-z0-9]', '', 'g')) || '%'
+                                    )
+                GROUP BY sp.speaker_id,
+                         sp.name,
+                         sp.party,
+                         sp."current_role",
+                         sp.profile->'bio'->>'born',
+                         sp.profile->'dataset_insights'->>'total_articles'
+                ORDER BY sp.name
             """)
             rows = cur.fetchall()
         conn.close()
@@ -333,6 +459,7 @@ def get_speakers():
                 "current_role": row[3],
                 "born": row[4] or "",
                 "total_articles": int(row[5]) if row[5] else 0,
+                "total_tweets": int(row[6]) if row[6] else 0,
             })
         return jsonify(speakers)
     except Exception as e:

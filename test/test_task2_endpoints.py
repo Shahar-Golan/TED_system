@@ -24,7 +24,7 @@ def test_agent_info():
     # Print summary (full response is too long)
     print(f"Description: {data['description'][:100]}...")
     print(f"Purpose: {data['purpose'][:100]}...")
-    print(f"Number of components: {len(data['architecture']['components'])}")
+    print(f"Prompt template keys: {list(data['prompt_template'].keys())}")
     print(f"Number of prompt examples: {len(data['prompt_examples'])}")
     
     # Print first example summary
@@ -32,8 +32,8 @@ def test_agent_info():
         example = data['prompt_examples'][0]
         print(f"\nFirst Example:")
         print(f"  Prompt: {example['prompt']}")
-        print(f"  Iterations: {example['metadata']['iterations']}")
-        print(f"  Tweets found: {example['metadata']['tweets_found']}")
+        print(f"  Steps: {len(example['steps'])}")
+        print(f"  First module: {example['steps'][0]['module']}")
         print(f"  Response length: {len(example['full_response'])} chars")
     
     print("\n" + "="*80 + "\n")
