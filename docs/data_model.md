@@ -266,10 +266,11 @@ the RSS ingestion pipeline (Stage 6 — speaker-profile enrichment).
     "items": [
       {
         "date": "ISO 8601 date",
-        "headline": "string",
-        "summary": "string — up to 200 characters from article body",
+        "headline": "string — paraphrased (not the publisher headline)",
+        "summary": "string — short body text with source link",
         "significance": "primary subject | significant mention | brief mention | tangential",
-        "source_article_id": "string — FK to news_articles.doc_id"
+        "source_article_id": "string — FK to news_articles.doc_id",
+        "source_url": "string — canonical article URL"
       }
     ]
   }
@@ -298,7 +299,12 @@ top-level sibling of `bio`, `media_profile`, `notable_topics`, etc.
 | Normalised headline prefix matches existing item (first 60 chars) | Replace existing item (same-development merge) |
 | Distinct development | Prepend as new item (newest-first order) |
 | Items older than 90 days | Dropped on next enrichment write |
-| Item cap | Maximum 10 items retained |
+| Item cap | Maximum 5 items retained |
+| Relevance gate | Only PRIMARY/SECONDARY mentions are eligible |
+| Importance gate | LLM must mark item as materially important (fluff is rejected) |
+
+`5` is an upper bound, not a target. The pipeline may keep fewer than five
+items when candidate articles fail the material-importance gate.
 
 ---
 

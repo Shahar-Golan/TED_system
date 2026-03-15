@@ -316,13 +316,19 @@ def main() -> None:  # noqa: C901  (complexity is acceptable for a pipeline runn
 
     settings = load_settings("config/settings.yaml")
     feeds = load_feeds("config/feeds.yaml")
-    politicians = load_politicians("config/politicians.yaml")
+    all_politicians = load_politicians("config/politicians.yaml")
+    politicians = [p for p in all_politicians if p.enabled]
     topics = load_topics("config/topics.yaml")
     data_dir = Path(settings.storage.data_dir)
 
     enabled_feeds = [f for f in feeds if f.enabled]
     print(f"Loaded {len(enabled_feeds)} enabled feed(s).", flush=True)
-    print(f"Tracking {len(politicians)} politician(s).", flush=True)
+    disabled_politicians = len(all_politicians) - len(politicians)
+    print(
+        f"Tracking {len(politicians)} enabled politician(s)"
+        f" ({disabled_politicians} disabled).",
+        flush=True,
+    )
     gha_endgroup()
 
     # -----------------------------------------------------------------------
