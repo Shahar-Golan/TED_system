@@ -317,11 +317,10 @@ items when candidate articles fail the material-importance gate.
 
 ### Overview
 
-After a new article is persisted to Supabase, `run_pipeline.py` (Stage 7 →
-now Stage 6 in the current pipeline) calls
-`src/rss-extractor/src/services/pinecone_indexer.py` to embed and upsert each
-article into the `politics-news` Pinecone index using the same methodology as
-`src/load_news_to_supabase_and_pinecone.py`.
+After a new article is persisted to Supabase, `run_pipeline.py` Stage 6
+calls `src/rss-extractor/src/services/pinecone_indexer.py` to embed and upsert
+each article into the `politics-news` Pinecone index using the same methodology
+as `src/load_news_to_supabase_and_pinecone.py`.
 
 ### Where indexing happens
 

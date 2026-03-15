@@ -64,7 +64,10 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.adapters.supabase_export import SupabaseRecord
 
 # Heavy dependencies are imported at module level with a graceful fallback
 # so that the module remains importable in test/CI environments where
@@ -85,6 +88,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PINECONE_NEWS_INDEX: str = "politics-news"
+# Vendor-specific model identifier used by the llmod.ai OpenAI-compatible
+# endpoint.  The ``RPRTHPB-`` prefix selects ``text-embedding-3-small`` on
+# that platform.  Must match ``src/load_news_to_supabase_and_pinecone.py``.
 EMBEDDING_MODEL: str = "RPRTHPB-text-embedding-3-small"
 EMBEDDING_DIMENSIONS: int = 1024
 DEFAULT_BATCH_SIZE: int = 50
@@ -161,7 +167,7 @@ class IndexableArticle:
 # ---------------------------------------------------------------------------
 
 
-def supabase_record_to_indexable(record: Any) -> IndexableArticle:
+def supabase_record_to_indexable(record: SupabaseRecord) -> IndexableArticle:
     """Convert a :class:`~src.adapters.supabase_export.SupabaseRecord` to an
     :class:`IndexableArticle`.
 
@@ -170,7 +176,7 @@ def supabase_record_to_indexable(record: Any) -> IndexableArticle:
     ``list[str]`` required by Pinecone metadata.
 
     Args:
-        record: A ``SupabaseRecord`` instance.
+        record: A :class:`~src.adapters.supabase_export.SupabaseRecord` instance.
 
     Returns:
         An :class:`IndexableArticle` ready for indexing.
