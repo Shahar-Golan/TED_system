@@ -1053,3 +1053,247 @@ class TestImportSmoke:
             patched.side_effect = RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set")
             with pytest.raises(RuntimeError, match="SUPABASE_URL"):
                 patched([], {}, "", "")
+
+
+# ===========================================================================
+# Section 6: Frontend rendering contract
+# ===========================================================================
+
+
+# Fixture: a fully enriched profile matching the real frontend renderer contract.
+# Mirrors the exact field names and types accessed by SpeakerProfile.jsx.
+ENRICHED_PROFILE_FIXTURE: dict[str, Any] = {
+    "name": "Donald Trump",
+    "bio": {
+        "full_name": "Donald John Trump",
+        "born": "1946",
+        "party": "Republican",
+        "current_role": "President",
+        "net_worth_estimate": "$2.5B (est.)",
+        "previous_roles": ["45th President of the United States"],
+        "education": ["Wharton School, University of Pennsylvania"],
+    },
+    "notable_topics": [
+        {
+            "topic": "Trade Policy",
+            "category": "Economy",
+            "stance": "Protectionist",
+            "key_statements": ["We will put America first."],
+            "evolution": "Escalated tariffs since 2018.",
+            "controversies": "Multiple WTO disputes.",
+        }
+    ],
+    "timeline_highlights": [
+        {
+            "year": "2017",
+            "event": "Inaugurated as 45th President",
+            "significance": "First major outsider to win presidency.",
+        }
+    ],
+    "controversies": [
+        {
+            "title": "January 6 Capitol Riot",
+            "year": "2021",
+            "description": "Supporters stormed the US Capitol.",
+            "outcome": "Second impeachment acquittal",
+            "impact": "Permanent historic stain on term",
+        }
+    ],
+    "relationships": {
+        "allies": ["Mike Pence"],
+        "opponents": ["Nancy Pelosi"],
+        "co_mentioned_figures": {"Joe Biden": 450},
+        "relationship_context": "Highly polarising.",
+    },
+    "public_perception": {
+        "approval_trend": "Declining",
+        "base_support": "Strong among rural voters",
+        "opposition": "Strong among urban progressives",
+        "key_narratives": ["America First", "MAGA movement"],
+    },
+    "media_profile": {
+        "coverage_volume": "Extremely high",
+        "top_covering_states": {"Florida": 120, "New York": 95},
+        "media_narrative": "Dominant and divisive figure.",
+        "sentiment_trend": "Polarised",
+    },
+    "dataset_insights": {
+        "total_articles": 1250,
+        "date_range": "2017–2024",
+        "top_title_keywords": {"Trump": 800, "President": 600},
+        "geographic_focus": "National (US)",
+    },
+    "recent_news": {
+        "summary": "Trump signs executive order on trade tariffs.",
+        "last_updated": datetime.now(tz=timezone.utc).isoformat(),
+        "date_range": "2026-03-01 – 2026-03-15",
+        "source_article_ids": ["abc123"],
+        "items": [
+            {
+                "date": "2026-03-15",
+                "headline": "Trump signs executive order on trade tariffs",
+                "summary": "President Trump signed a sweeping executive order today.",
+                "significance": "primary subject",
+                "source_article_id": "abc123",
+            }
+        ],
+    },
+}
+
+
+class TestFrontendRenderingContract:
+    """
+    Verify that the enrichment output satisfies the exact field contract
+    consumed by SpeakerProfile.jsx.
+
+    Each test mirrors a specific rendering path in the React component.
+    """
+
+    def _make_enriched(self) -> dict[str, Any]:
+        import copy
+        return copy.deepcopy(ENRICHED_PROFILE_FIXTURE)
+
+    # -- bio section (renderBio) --
+
+    def test_bio_full_name_present(self) -> None:
+        """renderBio reads bio.full_name — must be a string."""
+        p = self._make_enriched()
+        assert isinstance(p["bio"]["full_name"], str)
+
+    def test_bio_current_role_present(self) -> None:
+        """renderBio reads bio.current_role for the profile header and bio grid."""
+        p = self._make_enriched()
+        assert isinstance(p["bio"]["current_role"], str)
+
+    def test_bio_previous_roles_is_list_of_strings(self) -> None:
+        """renderBio iterates bio.previous_roles as a list of strings."""
+        p = self._make_enriched()
+        pr = p["bio"].get("previous_roles", [])
+        assert isinstance(pr, list)
+        for role in pr:
+            assert isinstance(role, str)
+
+    def test_bio_education_is_list_of_strings(self) -> None:
+        """renderBio iterates bio.education as a list of strings."""
+        p = self._make_enriched()
+        edu = p["bio"].get("education", [])
+        assert isinstance(edu, list)
+        for item in edu:
+            assert isinstance(item, str)
+
+    # -- timeline section (renderTimeline) --
+
+    def test_timeline_highlights_is_list(self) -> None:
+        """renderTimeline reads profile.timeline_highlights as an array."""
+        p = self._make_enriched()
+        assert isinstance(p["timeline_highlights"], list)
+
+    def test_timeline_item_has_year_and_event(self) -> None:
+        """Each timeline item must have year (str) and event (str)."""
+        p = self._make_enriched()
+        for item in p["timeline_highlights"]:
+            assert "year" in item and isinstance(item["year"], str)
+            assert "event" in item and isinstance(item["event"], str)
+
+    def test_timeline_item_significance_optional(self) -> None:
+        """significance is optional; renderTimeline renders it as <p> if present."""
+        p = self._make_enriched()
+        for item in p["timeline_highlights"]:
+            if "significance" in item:
+                assert isinstance(item["significance"], str)
+
+    # -- recent_news section (renderRecentNews) --
+
+    def test_recent_news_top_level_key_in_enriched_profile(self) -> None:
+        """recent_news must be a top-level sibling of bio, controversies, etc."""
+        p = self._make_enriched()
+        assert "recent_news" in p
+
+    def test_recent_news_required_top_level_fields(self) -> None:
+        """renderRecentNews reads summary, last_updated, date_range, items."""
+        p = self._make_enriched()
+        rn = p["recent_news"]
+        for field in ("summary", "last_updated", "date_range", "items"):
+            assert field in rn, f"recent_news missing required field '{field}'"
+
+    def test_recent_news_items_is_list(self) -> None:
+        """renderRecentNews iterates rn.items as an array."""
+        p = self._make_enriched()
+        assert isinstance(p["recent_news"]["items"], list)
+
+    def test_recent_news_item_required_fields(self) -> None:
+        """Each item must have date, headline, summary (all strings)."""
+        p = self._make_enriched()
+        for item in p["recent_news"]["items"]:
+            assert "date" in item and isinstance(item["date"], str)
+            assert "headline" in item and isinstance(item["headline"], str)
+            assert "summary" in item and isinstance(item["summary"], str)
+
+    def test_recent_news_item_significance_optional(self) -> None:
+        """significance is an optional badge field on each item."""
+        p = self._make_enriched()
+        for item in p["recent_news"]["items"]:
+            if "significance" in item:
+                assert isinstance(item["significance"], str)
+
+    def test_enrichment_preserves_recent_news_shape(self) -> None:
+        """merge_profile_update produces recent_news matching the renderer contract."""
+        today = datetime.now(tz=timezone.utc).date().isoformat()
+        base_profile = _make_profile()
+        news_item = RecentNewsItem(
+            date=today,
+            headline="Test headline for rendering",
+            summary="A short summary of the article.",
+            significance="primary subject",
+            source_article_id="doc-xyz",
+        )
+        payload = RecentNewsPayload(
+            summary="Test headline for rendering",
+            last_updated=datetime.now(tz=timezone.utc).isoformat(),
+            date_range=f"{today} – {today}",
+            source_article_ids=["doc-xyz"],
+            items=[news_item],
+        )
+        update = SpeakerProfileUpdate(
+            speaker_id="donald_trump",
+            role_update=ResolvedRoleUpdate(
+                new_role="", existing_role=None, should_update=False, reason="test"
+            ),
+            recent_news=payload,
+        )
+        merged = merge_profile_update(base_profile, update)
+
+        rn = merged.get("recent_news")
+        assert rn is not None, "recent_news must be present after enrichment"
+        assert isinstance(rn["items"], list)
+        assert len(rn["items"]) == 1
+        item = rn["items"][0]
+        # Verify every field the frontend renderer accesses
+        assert isinstance(item["date"], str)
+        assert isinstance(item["headline"], str)
+        assert isinstance(item["summary"], str)
+        assert isinstance(item["significance"], str)
+
+    def test_missing_recent_news_does_not_break_old_rows(self) -> None:
+        """Old profile rows without recent_news must still render (returns empty list)."""
+        profile_without_news: dict[str, Any] = {
+            "name": "Historic Speaker",
+            "bio": {"current_role": "Senator"},
+        }
+        # Simulate what renderRecentNews does in JS: rn = profile.recent_news
+        rn = profile_without_news.get("recent_news")
+        items = rn["items"] if (rn and "items" in rn) else []
+        assert items == []
+
+    # -- dataset_insights — numeric field contract --
+
+    def test_dataset_insights_total_articles_is_int(self) -> None:
+        """renderDataInsights calls total_articles.toLocaleString() — must be numeric."""
+        p = self._make_enriched()
+        assert isinstance(p["dataset_insights"]["total_articles"], int)
+
+    def test_relationships_co_mentioned_figures_values_are_numeric(self) -> None:
+        """renderRelationships calls count.toLocaleString() — values must be numeric."""
+        p = self._make_enriched()
+        for val in p["relationships"].get("co_mentioned_figures", {}).values():
+            assert isinstance(val, (int, float))

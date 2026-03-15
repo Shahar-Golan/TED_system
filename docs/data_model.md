@@ -256,7 +256,7 @@ the RSS ingestion pipeline (Stage 6 — speaker-profile enrichment).
   "dataset_insights": { "total_articles": "number" },
   "public_perception": {},
   "timeline_highlights": [
-    { "year": "string", "event": "string" }
+    { "year": "string", "event": "string", "significance": "string (optional)" }
   ],
   "recent_news": {
     "summary": "string — compact narrative of most recent development",
