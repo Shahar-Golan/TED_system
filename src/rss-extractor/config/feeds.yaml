@@ -1,3 +1,54 @@
+# feeds.yaml
+# Registry of RSS/Atom feeds to poll.
+#
+# Each entry defines a feed source for the Scout poller.
+# Fields:
+#   id         - unique slug identifier for this feed
+#   name       - human-readable display name
+#   url        - URL of the RSS or Atom feed
+#   enabled    - whether the feed is active (true/false)
+#   tags       - optional list of topic tags for this source
+#   poll_interval_minutes - how often to poll (overrides global setting)
+
+feeds:
+  # ── US Political News — Dedicated Politics Feeds ──────────────────────────
+
+  - id: NYTimes-Politics
+    name: New York Times Politics
+    url: https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml
+    enabled: false
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: politico
+    name: Politico
+    url: https://rss.politico.com/politics-news.xml
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: the-hill
+    name: The Hill
+    url: https://thehill.com/homenews/feed/
+    enabled: false
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: npr-politics
+    name: NPR Politics
+    url: https://feeds.npr.org/1001/rss.xml
+    enabled: false
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
   - id: pbs-newshour-politics
     name: PBS NewsHour Politics
     url: https://www.pbs.org/newshour/feeds/rss/politics
@@ -5,4 +56,173 @@
     tags:
       - politics
       - national
+    poll_interval_minutes: 30
+
+  - id: propublica
+    name: ProPublica
+    url: https://www.propublica.org/feeds/propublica/main
+    enabled: true
+    tags:
+      - politics
+      - national
+      - investigative
+    poll_interval_minutes: 30
+
+  - id: the-nation
+    name: The Nation
+    url: https://www.thenation.com/subject/politics/feed/
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: washington-examiner
+    name: Washington Examiner
+    url: https://www.washingtonexaminer.com/feed
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: axios-politics
+    name: Axios Politics
+    url: https://www.axios.com/feeds/feed.rss
+    enabled: false
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: vox-world-politics
+    name: Vox World Politics
+    url: https://www.vox.com/rss/world-politics/index.xml
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  # ── Major US National Papers ───────────────────────────────────────────────
+
+  - id: washington-post-politics
+    name: Washington Post Politics
+    url: https://feeds.washingtonpost.com/rss/politics
+    enabled: false
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: latimes-politics
+    name: Los Angeles Times Politics
+    url: https://www.latimes.com/politics/rss2.0.xml
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  # ── US Broadcast / Cable News ─────────────────────────────────────────────
+
+  - id: abc-news
+    name: ABC News
+    url: https://abcnews.go.com/abcnews/topstories
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: cbs-news-politics
+    name: CBS News Politics
+    url: https://www.cbsnews.com/latest/rss/us
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: nbc-news
+    name: NBC News
+    url: https://feeds.nbcnews.com/nbcnews/public/news
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: fox-news-politics
+    name: Fox News Politics
+    url: https://moxie.foxnews.com/google-publisher/politics.xml
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  - id: cnn-politics
+    name: CNN Politics
+    url: http://rss.cnn.com/rss/cnn_allpolitics.rss
+    enabled: true
+    tags:
+      - politics
+      - national
+    poll_interval_minutes: 30
+
+  # ── International Sources Covering US Politics ────────────────────────────
+
+  - id: bbc-us-canada
+    name: BBC US & Canada
+    url: https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml
+    enabled: true
+    tags:
+      - politics
+      - international
+    poll_interval_minutes: 30
+
+  - id: guardian-us-politics
+    name: The Guardian US Politics
+    url: https://www.theguardian.com/us-news/us-politics/rss
+    enabled: true
+    tags:
+      - politics
+      - international
+    poll_interval_minutes: 30
+
+  - id: foreign-policy
+    name: Foreign Policy
+    url: https://foreignpolicy.com/feed/
+    enabled: true
+    tags:
+      - politics
+      - international
+    poll_interval_minutes: 30
+
+  - id: the-economist-us
+    name: The Economist — United States
+    url: https://www.economist.com/united-states/rss.xml
+    enabled: false
+    tags:
+      - politics
+      - international
+    poll_interval_minutes: 30
+
+  - id: financial-times
+    name: Financial Times
+    url: https://www.ft.com/rss/home
+    enabled: true
+    tags:
+      - politics
+      - international
+    poll_interval_minutes: 30
+
+  - id: christian-science-monitor
+    name: Christian Science Monitor
+    url: https://rss.csmonitor.com/feeds/all
+    enabled: true
+    tags:
+      - politics
+      - international
     poll_interval_minutes: 30
