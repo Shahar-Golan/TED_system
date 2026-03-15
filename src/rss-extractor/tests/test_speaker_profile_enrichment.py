@@ -365,6 +365,48 @@ class TestMatchSpeaker:
         enrich_from_article(record, mentions, client, stats)
         assert stats.matches_found == 2
 
+    def test_recent_news_list_shape_is_normalized(self) -> None:
+        """Legacy list-shaped recent_news should not crash dedup logic."""
+        record = _make_record(doc_id="article-001", title="General update", text="No explicit role.")
+        mention = _make_mention()
+        row = _make_speaker_row(
+            current_role="President",
+            profile=_make_profile(
+                current_role="President",
+                bio_role="President",
+                recent_news=[
+                    {
+                        "date": "2025-03-01",
+                        "headline": "Existing headline",
+                        "summary": "Existing summary",
+                        "significance": "primary subject",
+                        "source_article_id": "article-001",
+                    }
+                ],
+            ),
+        )
+        stats = EnrichmentStats()
+
+        with patch(
+            "services.speaker_profile_enrichment.match_speaker",
+            return_value=SpeakerMatchResult(
+                speaker_id="donald_trump",
+                name="Donald Trump",
+                confidence=1.0,
+                match_reason="exact_id",
+            ),
+        ), patch(
+            "services.speaker_profile_enrichment.fetch_speaker_row",
+            return_value=row,
+        ), patch(
+            "services.speaker_profile_enrichment.persist_speaker_update",
+            return_value=True,
+        ) as persist_mock:
+            enrich_from_article(record, [mention], MagicMock(), stats)
+
+        assert stats.no_op_dedup == 1
+        persist_mock.assert_not_called()
+
 
 # ===========================================================================
 # Section 2: Role updates

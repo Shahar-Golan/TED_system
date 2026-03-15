@@ -752,6 +752,38 @@ def merge_recent_news(
     )
 
 
+def _normalize_existing_recent_news(
+    recent_news: Any,
+) -> dict[str, Any] | None:
+    """Normalize legacy ``profile.recent_news`` shapes to the expected dict.
+
+    The canonical shape is a dict containing ``items`` and
+    ``source_article_ids``. Some older rows store ``recent_news`` as a raw
+    list of item dicts; this helper upgrades that shape in-memory so callers
+    can safely use dict accessors.
+    """
+    if isinstance(recent_news, dict):
+        return recent_news
+
+    if isinstance(recent_news, list):
+        items: list[dict[str, Any]] = [
+            item for item in recent_news if isinstance(item, dict)
+        ]
+        source_article_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for item in items:
+            article_id = item.get("source_article_id")
+            if isinstance(article_id, str) and article_id and article_id not in seen_ids:
+                source_article_ids.append(article_id)
+                seen_ids.add(article_id)
+        return {
+            "items": items,
+            "source_article_ids": source_article_ids,
+        }
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Safe profile JSON merge
 # ---------------------------------------------------------------------------
@@ -994,8 +1026,8 @@ def enrich_from_article(
         existing_profile = row.get("profile") or {}
         if not isinstance(existing_profile, dict):
             existing_profile = {}
-        existing_recent_news: dict[str, Any] | None = existing_profile.get(
-            "recent_news"
+        existing_recent_news = _normalize_existing_recent_news(
+            existing_profile.get("recent_news")
         )
 
         # Check for true no-op: same article already in recent_news
