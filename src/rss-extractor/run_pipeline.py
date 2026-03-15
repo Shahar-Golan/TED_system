@@ -57,9 +57,14 @@ if str(_SCRIPT_DIR) not in sys.path:
 # Pipeline-stage imports (after sys.path fixup)
 # ---------------------------------------------------------------------------
 from src.adapters.supabase_export import records_to_csv, to_supabase_record  # noqa: E402
+from src.extractor.models import PoliticianMention  # noqa: E402
 from src.pipelines.ingest_article import ingest_article  # noqa: E402
 from src.pipelines.ingest_feed import ingest_feed  # noqa: E402
 from src.scout.fetcher import fetch_article  # noqa: E402
+from src.services.speaker_profile_enrichment import (  # noqa: E402
+    EnrichmentStats,
+    enrich_speaker_profiles,
+)
 from src.storage.document_store import load_raw_html, save_raw_html  # noqa: E402
 from src.storage.sql import (  # noqa: E402
     get_feed_item,
@@ -278,6 +283,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip the article-extraction stage.",
     )
+    parser.add_argument(
+        "--skip-enrich",
+        action="store_true",
+        help="Skip the speaker-profile enrichment stage (Stage 6).",
+    )
     return parser.parse_args()
 
 
@@ -371,6 +381,7 @@ def main() -> None:  # noqa: C901  (complexity is acceptable for a pipeline runn
     # -----------------------------------------------------------------------
     gha_group("Stage 3 — Extract articles")
     supabase_records = []
+    mentions_by_article: dict[str, list[PoliticianMention]] = {}
     extracted_success = 0
     skipped_no_html = 0
     if args.skip_extract:
@@ -398,6 +409,8 @@ def main() -> None:  # noqa: C901  (complexity is acceptable for a pipeline runn
                     result.extracted_article, mentions=result.mentions
                 )
                 supabase_records.append(record)
+                if result.mentions:
+                    mentions_by_article[record.doc_id] = result.mentions
                 extracted_success += 1
 
         if skipped_no_html:
@@ -474,6 +487,69 @@ def main() -> None:  # noqa: C901  (complexity is acceptable for a pipeline runn
     gha_endgroup()
 
     # -----------------------------------------------------------------------
+    # Stage 6: Enrich speaker profiles
+    # -----------------------------------------------------------------------
+    gha_group("Stage 6 — Enrich speaker profiles")
+    enrich_stats: EnrichmentStats | None = None
+    if args.dry_run:
+        print(
+            "Stage 6 skipped (--dry-run). "
+            "Would have enriched speaker profiles from "
+            f"{len(supabase_records)} article(s).",
+            flush=True,
+        )
+    elif args.skip_enrich:
+        print("Stage 6 skipped (--skip-enrich).", flush=True)
+    elif not supabase_records:
+        print("Stage 6: nothing to enrich (0 extracted records).", flush=True)
+    else:
+        supabase_url = os.environ.get("SUPABASE_URL", "")
+        supabase_key = os.environ.get("SUPABASE_KEY", "")
+        if not supabase_url or not supabase_key:
+            gha_warning(
+                "SUPABASE_URL or SUPABASE_KEY not set — "
+                "speaker-profile enrichment skipped."
+            )
+            print(
+                "WARNING: SUPABASE_URL/SUPABASE_KEY not set. "
+                "Skipping speaker-profile enrichment.",
+                file=sys.stderr,
+            )
+        else:
+            # Build politician_aliases map from loaded politician config
+            politician_aliases: dict[str, list[str]] = {
+                p.id: p.aliases for p in politicians
+            }
+            try:
+                enrich_stats = enrich_speaker_profiles(
+                    records=supabase_records,
+                    mentions_by_article=mentions_by_article,
+                    supabase_url=supabase_url,
+                    supabase_key=supabase_key,
+                    politician_aliases=politician_aliases,
+                )
+                if enrich_stats.errors:
+                    gha_warning(
+                        f"{enrich_stats.errors} enrichment error(s) occurred."
+                    )
+                print(
+                    f"Stage 6 complete: articles={enrich_stats.articles_processed}, "
+                    f"matches={enrich_stats.matches_found}, "
+                    f"role_updates={enrich_stats.role_updates}, "
+                    f"recent_news_updates={enrich_stats.recent_news_updates}, "
+                    f"skipped={enrich_stats.ambiguous_skipped + enrich_stats.no_op_dedup}, "
+                    f"errors={enrich_stats.errors}.",
+                    flush=True,
+                )
+            except RuntimeError as exc:
+                gha_warning(f"Speaker-profile enrichment failed: {exc}")
+                print(
+                    f"WARNING: Speaker-profile enrichment failed: {exc}",
+                    file=sys.stderr,
+                )
+    gha_endgroup()
+
+    # -----------------------------------------------------------------------
     # Write GitHub Actions step summary
     # -----------------------------------------------------------------------
     summary_lines = [
@@ -490,11 +566,21 @@ def main() -> None:  # noqa: C901  (complexity is acceptable for a pipeline runn
         summary_lines.append(
             f"| 5 · Push to Supabase | ⏭ dry-run ({len(supabase_records)} ready) |"
         )
+        summary_lines.append("| 6 · Enrich speaker profiles | ⏭ dry-run |")
     else:
         summary_lines.append(
             f"| 5 · Push to Supabase | {uploaded} uploaded, "
             f"{skipped_dup} duplicates, {push_errors} errors |"
         )
+        if enrich_stats is not None:
+            summary_lines.append(
+                f"| 6 · Enrich speaker profiles | "
+                f"{enrich_stats.matches_found} matches, "
+                f"{enrich_stats.role_updates} role updates, "
+                f"{enrich_stats.recent_news_updates} news updates |"
+            )
+        else:
+            summary_lines.append("| 6 · Enrich speaker profiles | ⏭ skipped |")
     _write_step_summary("\n".join(summary_lines))
 
     # Expose key counts as step outputs for downstream jobs

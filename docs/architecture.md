@@ -79,7 +79,57 @@ Graph definition: `src/graphs/query_graph.py`
 
 ---
 
-## Tracked public figures
+## RSS ingestion pipeline (System A — Stage 6)
+
+The `src/rss-extractor/run_pipeline.py` script runs six stages:
+
+```
+Stage 1 — Poll feeds        → fetch RSS feed entries
+Stage 2 — Fetch articles    → download HTML for each new entry
+Stage 3 — Extract articles  → parse body, detect politician mentions
+Stage 4 — Export CSV        → write local CSV artefact
+Stage 5 — Push to Supabase  → upsert into news_articles + Pinecone
+Stage 6 — Enrich profiles   → update matching speaker_profiles rows
+```
+
+### Stage 6 — Speaker-profile enrichment
+
+Stage 6 runs after articles are successfully pushed to Supabase. It is
+implemented in `src/rss-extractor/src/services/speaker_profile_enrichment.py`.
+
+**What it does (per article):**
+
+1. Reads the `PoliticianMention` records produced by Stage 3.
+2. Maps each mention to a `speaker_profiles` row via a deterministic
+   `politician_id → speaker_id` conversion (dashes → underscores) with a
+   normalised-name fallback.
+3. Extracts explicit role evidence from the article title and body using
+   regex patterns near the politician's name.
+4. Resolves whether the stored `current_role` should be updated (only when
+   new evidence is stronger than the existing value).
+5. Mirrors any role update to `profile.bio.current_role` in the same write
+   (Option A sync policy — SQL is source of truth).
+6. Builds a `profile.recent_news` item from the article and merges it into
+   the existing payload with deduplication and recency rules applied.
+7. Persists `current_role`, `profile`, and `updated_at` in a single update
+   per speaker.
+
+**Skipped automatically when:**
+
+* `--dry-run` flag is set.
+* `--skip-enrich` flag is set.
+* No articles were extracted in the current run.
+* `SUPABASE_URL` or `SUPABASE_KEY` environment variables are not set.
+
+**Logging:** All matching decisions, role changes, dedup no-ops, and errors
+are logged at appropriate levels (INFO / WARNING / DEBUG) for auditability.
+
+See `docs/data_model.md` for the `speaker_profiles` schema, `current_role`
+sync policy, and `recent_news` deduplication rules.
+
+---
+
+
 
 Donald Trump, Hillary Clinton, Barack Obama, Joe Biden, Kamala Harris, Elon Musk, Bill Gates, Mark Zuckerberg
 

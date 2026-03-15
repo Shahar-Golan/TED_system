@@ -46,6 +46,7 @@ function SpeakerProfile({ onBack }) {
     { id: 'perception', label: 'Public Perception' },
     { id: 'media', label: 'Media Profile' },
     { id: 'data', label: 'Dataset Insights' },
+    { id: 'news', label: 'Recent News' },
   ];
 
   const renderBio = (profile) => {
@@ -255,6 +256,42 @@ function SpeakerProfile({ onBack }) {
     );
   };
 
+  const renderRecentNews = (profile) => {
+    const rn = profile.recent_news;
+    if (!rn || !rn.items || rn.items.length === 0) {
+      return (
+        <div className="sp-section">
+          <p className="sp-empty-section">No recent news available for this speaker.</p>
+        </div>
+      );
+    }
+    return (
+      <div className="sp-section">
+        <div className="sp-news-meta">
+          {rn.summary && <p className="sp-news-summary">{rn.summary}</p>}
+          <span className="sp-news-updated">
+            Updated: {rn.last_updated ? new Date(rn.last_updated).toLocaleDateString() : 'unknown'}
+            {rn.date_range ? ` · ${rn.date_range}` : ''}
+          </span>
+        </div>
+        {rn.items.map((item, i) => (
+          <div key={i} className="sp-news-card">
+            <div className="sp-news-header">
+              <h4>{item.headline}</h4>
+              <div className="sp-news-badges">
+                <span className="sp-news-date-badge">{item.date}</span>
+                {item.significance && (
+                  <span className="sp-news-sig-badge">{item.significance}</span>
+                )}
+              </div>
+            </div>
+            <p>{item.summary}</p>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderDataInsights = (profile) => {
     const di = profile.dataset_insights || {};
     return (
@@ -288,7 +325,7 @@ function SpeakerProfile({ onBack }) {
 
   const renderSection = () => {
     if (!selectedProfile) return null;
-    const renderers = { bio: renderBio, topics: renderTopics, timeline: renderTimeline, controversies: renderControversies, relationships: renderRelationships, perception: renderPerception, media: renderMedia, data: renderDataInsights };
+    const renderers = { bio: renderBio, topics: renderTopics, timeline: renderTimeline, controversies: renderControversies, relationships: renderRelationships, perception: renderPerception, media: renderMedia, data: renderDataInsights, news: renderRecentNews };
     return renderers[activeSection]?.(selectedProfile) || null;
   };
 

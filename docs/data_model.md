@@ -210,7 +210,97 @@ Page Builder agent    → figure_pages table
 
 ---
 
-## Raw vs normalised data
+### Infrastructure (continued)
+
+#### `speaker_profiles`
+
+Per-figure profile data consumed by System B (Page Lookup agent) and enriched by
+the RSS ingestion pipeline (Stage 6 — speaker-profile enrichment).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | SERIAL | Primary key |
+| `speaker_id` | TEXT | Unique slug, e.g. `donald_trump` (underscores) |
+| `name` | TEXT | Canonical full name |
+| `party` | TEXT | Political party affiliation |
+| `current_role` | TEXT | Current role — SQL source of truth (see sync policy below) |
+| `profile` | JSONB | Full structured profile (see schema below) |
+| `created_at` | TIMESTAMPTZ | Row creation time |
+| `updated_at` | TIMESTAMPTZ | Last enrichment or manual update |
+
+##### `profile` JSONB schema
+
+```json
+{
+  "name": "string",
+  "bio": {
+    "current_role": "string — always synced with SQL current_role column",
+    "party": "string",
+    "born": "string"
+  },
+  "controversies": [
+    { "title": "string", "year": "string", "description": "string" }
+  ],
+  "media_profile": {},
+  "relationships": { "relationship_context": "string" },
+  "notable_topics": [
+    {
+      "topic": "string",
+      "category": "string",
+      "stance": "string",
+      "key_statements": ["string"],
+      "evolution": "string",
+      "controversies": "string"
+    }
+  ],
+  "dataset_insights": { "total_articles": "number" },
+  "public_perception": {},
+  "timeline_highlights": [
+    { "year": "string", "event": "string", "significance": "string (optional)" }
+  ],
+  "recent_news": {
+    "summary": "string — compact narrative of most recent development",
+    "last_updated": "ISO 8601 timestamp of last enrichment write",
+    "date_range": "string — e.g. '2026-01-01 – 2026-03-15'",
+    "source_article_ids": ["doc_id strings — provenance to news_articles rows"],
+    "items": [
+      {
+        "date": "ISO 8601 date",
+        "headline": "string",
+        "summary": "string — up to 200 characters from article body",
+        "significance": "primary subject | significant mention | brief mention | tangential",
+        "source_article_id": "string — FK to news_articles.doc_id"
+      }
+    ]
+  }
+}
+```
+
+`recent_news` is added by Stage 6 (RSS ingestion enrichment). It is a
+top-level sibling of `bio`, `media_profile`, `notable_topics`, etc.
+
+##### `current_role` sync policy (Option A — SQL is source of truth)
+
+1. Article evidence is scanned for explicit role patterns (e.g. "President X",
+   "Minister of Defense Y").
+2. If strong evidence is found and is more specific than the existing stored
+   role, the SQL column `current_role` is updated.
+3. `profile.bio.current_role` is **always mirrored** from the SQL column in
+   the same atomic update — the two fields are never allowed to drift.
+4. Weak / vague role labels (e.g. "politician", "public figure") do not
+   overwrite a precise existing role.
+
+##### `recent_news` deduplication and merge rules
+
+| Rule | Behaviour |
+|---|---|
+| Same `doc_id` as an existing item | Replace existing item (refresh metadata) |
+| Normalised headline prefix matches existing item (first 60 chars) | Replace existing item (same-development merge) |
+| Distinct development | Prepend as new item (newest-first order) |
+| Items older than 90 days | Dropped on next enrichment write |
+| Item cap | Maximum 10 items retained |
+
+---
 
 - **Raw**: `tweets.text`, `news_articles.text` — unmodified source content.
 - **Normalised/derived**: `topics`, `contradictions`, `figure_pages` — LLM-generated analysis of the raw data.
