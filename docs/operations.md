@@ -25,10 +25,19 @@ Flask runs on `http://localhost:5000` by default.
 | Method | Endpoint | Description | Status |
 |---|---|---|---|
 | GET | `/api/stats` | Returns system configuration parameters | Live |
+| POST | `/api/execute` | Lecturer-compatible main entrypoint (`prompt` -> `status/error/response/steps`) | Live |
 | POST | `/api/prompt` | Simple RAG over tweets (legacy) | Live |
 | POST | `/api/agent/query` | Legacy ReAct agent (tweets only) | Live |
 | POST | `/api/v2/query` | Multi-agent LangGraph graph (tweets + news) | Live |
 | POST | `/api/v2/query/stream` | Multi-agent graph with SSE token streaming | Live |
+
+### Example — lecturer-compatible execute
+
+```bash
+curl -X POST http://localhost:5000/api/execute \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What did Trump say about immigration?"}'
+```
 
 ### Example — multi-agent query
 

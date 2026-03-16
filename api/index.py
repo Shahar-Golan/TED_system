@@ -214,6 +214,60 @@ def _build_agent_info_examples() -> list[dict[str, Any]]:
         }
     ]
 
+
+def _build_execute_steps(user_prompt: str, result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build a lecturer-compatible execution trace from graph output."""
+    route = str(result.get("route", ""))
+    route_reason = str(result.get("route_reason", ""))
+    tweets = result.get("tweets", [])
+    articles = result.get("articles", [])
+
+    steps: list[dict[str, Any]] = [
+        {
+            "module": "Router",
+            "prompt": {
+                "query": user_prompt,
+                "task": "Select the best agent path (tweet, news, or both)."
+            },
+            "response": {
+                "route": route,
+                "reason": route_reason
+            }
+        }
+    ]
+
+    if route in ("tweet_agent", "both"):
+        steps.append(
+            {
+                "module": "Tweet Agent",
+                "prompt": {
+                    "query": user_prompt,
+                    "source": "politics tweet index"
+                },
+                "response": {
+                    "tweets_count": len(tweets) if isinstance(tweets, list) else 0,
+                    "tweets": tweets if isinstance(tweets, list) else []
+                }
+            }
+        )
+
+    if route in ("news_agent", "both"):
+        steps.append(
+            {
+                "module": "News Agent",
+                "prompt": {
+                    "query": user_prompt,
+                    "source": "politics-news index"
+                },
+                "response": {
+                    "articles_count": len(articles) if isinstance(articles, list) else 0,
+                    "articles": articles if isinstance(articles, list) else []
+                }
+            }
+        )
+
+    return steps
+
 # --- Routes ---
 
 @app.route('/api/team_info', methods=['GET'])
@@ -409,6 +463,46 @@ def graph_query():
 
     except Exception as e:
         return jsonify({"error": f"Graph query failed: {str(e)}"}), 500
+
+
+@app.route('/api/execute', methods=['POST'])
+def execute() -> Response:
+    """
+    Lecturer-compatible entrypoint.
+    Input: {"prompt": "..."}
+    Output: {"status", "error", "response", "steps"}
+    """
+    data = request.get_json(silent=True) or {}
+    user_prompt = str(data.get('prompt', '')).strip() if isinstance(data, dict) else ''
+
+    if not user_prompt:
+        response_data = OrderedDict([
+            ("status", "error"),
+            ("error", "Missing required field: prompt"),
+            ("response", None),
+            ("steps", []),
+        ])
+        return jsonify(response_data), 400
+
+    try:
+        result = run_query(user_prompt)
+        steps = _build_execute_steps(user_prompt, result)
+
+        response_data = OrderedDict([
+            ("status", "ok"),
+            ("error", None),
+            ("response", result.get("answer", "")),
+            ("steps", steps),
+        ])
+        return jsonify(response_data)
+    except Exception as e:
+        response_data = OrderedDict([
+            ("status", "error"),
+            ("error", f"Execution failed: {str(e)}"),
+            ("response", None),
+            ("steps", []),
+        ])
+        return jsonify(response_data), 500
 
 
 @app.route('/api/v2/query/stream', methods=['POST'])
