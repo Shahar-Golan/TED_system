@@ -56,6 +56,38 @@ END
 
 Planned graph definition: `src/graphs/background_graph.py`
 
+### RSS Ingestion Pipeline (`src/rss-extractor/`) [COMPLETE — Stage 6 now includes Pinecone]
+
+Standalone scheduled pipeline that populates `news_articles` (Supabase) and
+the `politics-news` Pinecone index from RSS feeds.
+
+```
+Stage 1 — Poll feeds       → discover new feed items, write to tracker.db
+  ↓
+Stage 2 — Fetch articles   → download HTML for each pending feed item
+  ↓
+Stage 3 — Extract articles → run Trafilatura/Extractor, produce SupabaseRecord list
+  ↓
+Stage 4 — Export CSV       → write output.csv for audit trail
+  ↓
+Stage 5 — Push to Supabase → upsert SupabaseRecords into news_articles (dedup by doc_id)
+  ↓
+Stage 6 — Index in Pinecone → embed + upsert each new article into politics-news index
+                              using src/rss-extractor/src/services/pinecone_indexer.py
+                              (same model, metadata, and vector-ID strategy as the
+                               existing load_news_to_supabase_and_pinecone.py corpus)
+```
+
+Entry point: `src/rss-extractor/run_pipeline.py`
+
+**Stage 6 details:**
+
+- Reuses the repo's standard embedding model (`RPRTHPB-text-embedding-3-small`, 1024-dim).
+- Vector ID = `doc_id` (SHA-256) — idempotent upserts, no duplicates on reruns.
+- Metadata conforms to the `politics-news` contract (see `docs/data_model.md`).
+- Failures are logged; Supabase records are unaffected (article is stored even if Pinecone fails).
+- Skippable via `--skip-index` or `--dry-run` CLI flags.
+
 ### System B — Interactive Query Graph (on-demand) [COMPLETE]
 
 Routes user questions to specialist RAG agents via a cached-first strategy.
@@ -133,5 +165,5 @@ Embedding model: `RPRTHPB-text-embedding-3-small` via `https://api.llmod.ai/v1`
 - `src/graphs/background_graph.py` does not yet exist — System A is fully planned but not implemented.
 - `src/agents/page_lookup.py` is a stub that always returns `{"found": False}`. It will be upgraded in Phase 4.
 - `src/agents/ingestion_agent.py`, `topic_extractor.py`, `contradiction_finder.py`, `page_builder.py` are all planned but not yet implemented.
-- The `src/rss-extractor/` module is functional but not yet integrated into the main LangGraph pipeline.
+- The `src/rss-extractor/` module now integrates Pinecone indexing (Stage 6) but is not yet wired into the main LangGraph pipeline.
 - `src/agent/` contains a legacy ReAct agent kept for backward compatibility — it is not part of the current System B graph.

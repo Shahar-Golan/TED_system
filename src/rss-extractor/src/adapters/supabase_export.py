@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv
 import io
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
@@ -54,8 +55,8 @@ class SupabaseRecord:
 
     Field mapping rules:
 
-    * ``id`` — a deterministic 32-bit signed integer (> 1,000,000) derived
-      from the first 4 bytes of the ``doc_id`` SHA-256 hash.
+    * ``id`` — a UUID-4 string generated per record.  Callers may supply a
+      stable ``record_id`` to override the default.
     * ``doc_id`` — the pipeline's internal ``article_id`` (SHA-256 fingerprint).
     * ``title`` — extracted article headline.
     * ``text`` — cleaned article body text.
@@ -70,7 +71,7 @@ class SupabaseRecord:
     * ``created_at`` — ISO 8601 timestamp when this record was created.
     """
 
-    id: int
+    id: str
     doc_id: str
     title: str
     text: str
@@ -93,7 +94,7 @@ def to_supabase_record(
     source_platform: str = "rss",
     state: str = "",
     city: str = "",
-    record_id: int | None = None,
+    record_id: str | None = None,
     created_at: datetime | None = None,
 ) -> SupabaseRecord:
     """Convert an extracted article into a Supabase-compatible record.
@@ -106,21 +107,15 @@ def to_supabase_record(
         source_platform: Source platform identifier.  Defaults to ``"rss"``.
         state: US state if known; defaults to ``""`` (not currently derived).
         city: City if known; defaults to ``""`` (not currently derived).
-        record_id: Optional pre-generated integer id.  If ``None``, one is
-            derived deterministically from ``article.article_id``.
+        record_id: Optional pre-generated string id.  If ``None``, a UUID-4
+            is generated automatically.
         created_at: Optional creation timestamp.  Defaults to UTC now.
 
     Returns:
         A :class:`SupabaseRecord` ready for serialisation or database insert.
     """
     if record_id is None:
-        # Derive a deterministic positive 32-bit int > 1,000,000 from doc_id.
-        # doc_id is a SHA-256 hex string; take the first 4 bytes (8 hex chars),
-        # mask to 31 bits to guarantee a non-negative value, then shift the
-        # result into the range [1_000_001, 2_147_483_647].
-        raw = int(article.article_id[:8], 16) & 0x7FFF_FFFF
-        _range = 2_147_483_647 - 1_000_000
-        record_id = (raw % _range) + 1_000_001
+        record_id = str(uuid.uuid4())
 
     if created_at is None:
         created_at = datetime.now(tz=timezone.utc)
@@ -136,7 +131,7 @@ def to_supabase_record(
     # Build canonical link
     link = article.metadata.canonical_url or article.url
 
-    # Build speakers_mentioned from politician mentions
+    # Build speakers_mentioned from politician mentions as comma-separated string
     speakers: list[str] = []
     if mentions:
         seen: set[str] = set()
@@ -144,10 +139,7 @@ def to_supabase_record(
             if m.politician_name not in seen:
                 speakers.append(m.politician_name)
                 seen.add(m.politician_name)
-    # Format as a PostgreSQL array literal, e.g. {"Donald Trump","Joe Biden"}.
-    # Each element is double-quoted; internal double-quotes are escaped.
-    escaped = [name.replace('"', '\\"') for name in speakers]
-    speakers_str = "{" + ",".join(f'"{e}"' for e in escaped) + "}"
+    speakers_str = ", ".join(speakers)
 
     return SupabaseRecord(
         id=record_id,

@@ -3,7 +3,7 @@
 run_pipeline.py
 ===============
 Full RSS extraction pipeline: poll feeds → fetch articles → extract text →
-export CSV → push to Supabase.
+export CSV → push to Supabase → index in Pinecone.
 
 Designed to run unattended in GitHub Actions, but works locally too.
 
@@ -13,12 +13,14 @@ Usage — local
 
     cd src/rss-extractor
     python run_pipeline.py
-    python run_pipeline.py --dry-run          # skip Supabase push
+    python run_pipeline.py --dry-run          # skip Supabase push and Pinecone indexing
     python run_pipeline.py --skip-poll        # skip feed polling
+    python run_pipeline.py --skip-index       # skip Pinecone indexing stage
 
 Usage — GitHub Actions
 ----------------------
-Set ``SUPABASE_URL`` and ``SUPABASE_KEY`` as repository secrets, then::
+Set ``SUPABASE_URL``, ``SUPABASE_KEY``, ``PINECONE_API_KEY``, and
+``OPENAI_API_KEY`` as repository secrets, then::
 
     - name: Run RSS extraction pipeline
       working-directory: src/rss-extractor
@@ -26,6 +28,8 @@ Set ``SUPABASE_URL`` and ``SUPABASE_KEY`` as repository secrets, then::
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 Exit codes
 ----------
@@ -60,6 +64,11 @@ from src.adapters.supabase_export import records_to_csv, to_supabase_record  # n
 from src.pipelines.ingest_article import ingest_article  # noqa: E402
 from src.pipelines.ingest_feed import ingest_feed  # noqa: E402
 from src.scout.fetcher import fetch_article  # noqa: E402
+from src.services.pinecone_indexer import (  # noqa: E402
+    PineconeIndexResult,
+    index_articles,
+    supabase_record_to_indexable,
+)
 from src.storage.document_store import load_raw_html, save_raw_html  # noqa: E402
 from src.storage.sql import (  # noqa: E402
     get_feed_item,
@@ -234,13 +243,8 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=textwrap.dedent("""\
             Full RSS extraction pipeline.
-            Stages: poll → fetch → extract → push to Supabase.
+            Stages: poll → fetch → extract → push to Supabase → index in Pinecone.
         """),
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Run all stages but skip the final Supabase push.",
     )
     parser.add_argument(
         "--table",
@@ -277,6 +281,19 @@ def _parse_args() -> argparse.Namespace:
         "--skip-extract",
         action="store_true",
         help="Skip the article-extraction stage.",
+    )
+    parser.add_argument(
+        "--skip-index",
+        action="store_true",
+        help="Skip the Pinecone indexing stage (Stage 6).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Run all stages but skip the final Supabase push "
+            "and Pinecone indexing."
+        ),
     )
     return parser.parse_args()
 
@@ -480,6 +497,45 @@ def main() -> None:  # noqa: C901  (complexity is acceptable for a pipeline runn
     gha_endgroup()
 
     # -----------------------------------------------------------------------
+    # Stage 6: Index in Pinecone
+    # -----------------------------------------------------------------------
+    gha_group("Stage 6 — Index in Pinecone")
+    pinecone_upserted = pinecone_skipped = pinecone_errors = 0
+    if args.dry_run or args.skip_index:
+        reason = "--dry-run" if args.dry_run else "--skip-index"
+        print(
+            f"Stage 6 skipped ({reason}). "
+            f"Would have indexed {len(supabase_records)} record(s).",
+            flush=True,
+        )
+        if args.dry_run:
+            gha_notice(
+                f"Dry-run: {len(supabase_records)} record(s) ready for Pinecone."
+            )
+    elif not supabase_records:
+        print("Stage 6: nothing to index (0 new records).", flush=True)
+    else:
+        indexable = [supabase_record_to_indexable(r) for r in supabase_records]
+        index_result: PineconeIndexResult = index_articles(indexable)
+        pinecone_upserted = index_result.upserted
+        pinecone_skipped = index_result.skipped
+        pinecone_errors = index_result.errors
+        if pinecone_errors:
+            for err_msg in index_result.error_messages:
+                gha_error(f"Pinecone indexing error: {err_msg}")
+            gha_warning(
+                f"{pinecone_errors} article(s) failed Pinecone indexing. "
+                "Supabase records are intact; re-run with --skip-extract to "
+                "retry indexing only."
+            )
+        print(
+            f"Stage 6 complete: upserted={pinecone_upserted}, "
+            f"skipped={pinecone_skipped}, errors={pinecone_errors}.",
+            flush=True,
+        )
+    gha_endgroup()
+
+    # -----------------------------------------------------------------------
     # Write GitHub Actions step summary
     # -----------------------------------------------------------------------
     summary_lines = [
@@ -496,17 +552,28 @@ def main() -> None:  # noqa: C901  (complexity is acceptable for a pipeline runn
         summary_lines.append(
             f"| 5 · Push to Supabase | ⏭ dry-run ({len(supabase_records)} ready) |"
         )
+        summary_lines.append(
+            f"| 6 · Index in Pinecone | ⏭ dry-run ({len(supabase_records)} ready) |"
+        )
     else:
         summary_lines.append(
             f"| 5 · Push to Supabase | {uploaded} uploaded, "
             f"{skipped_dup} duplicates, {push_errors} errors |"
         )
+        if args.skip_index:
+            summary_lines.append("| 6 · Index in Pinecone | ⏭ skipped (--skip-index) |")
+        else:
+            summary_lines.append(
+                f"| 6 · Index in Pinecone | {pinecone_upserted} upserted, "
+                f"{pinecone_skipped} skipped, {pinecone_errors} errors |"
+            )
     _write_step_summary("\n".join(summary_lines))
 
     # Expose key counts as step outputs for downstream jobs
     gha_set_output("new_feed_items", str(new_items_total))
     gha_set_output("extracted_articles", str(extracted_success))
     gha_set_output("uploaded_records", str(uploaded))
+    gha_set_output("pinecone_upserted", str(pinecone_upserted))
 
     # -----------------------------------------------------------------------
     # Exit
